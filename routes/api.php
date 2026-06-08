@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\TargetController;
 use App\Http\Controllers\Api\ProgramController;
 use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\ActivityController;
+use App\Http\Controllers\Api\ReportController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -76,5 +77,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // در بخش مسیرهای محافظت شده
     Route::get('forms/{id}/export', [FormController::class, 'export']);
     Route::post('forms/import', [FormController::class, 'import']);
+
+    // گزارشات (Reports)
+    Route::prefix('reports')->group(function () {
+        Route::get('statistics', [ReportController::class, 'statistics']);
+        Route::get('list', [ReportController::class, 'list']);
+        Route::get('details/{id}', [ReportController::class, 'details']);
+        Route::get('export', [ReportController::class, 'export']);
+    });
 
 });

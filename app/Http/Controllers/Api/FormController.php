@@ -19,9 +19,17 @@ class FormController extends Controller
      */
     public function index(Request $request)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
         $perPage = $request->get('per_page', 10);
 
         $query = Form::with(['unit', 'target', 'program', 'task', 'activity']);
+
+        // فیلتر بر اساس واحد (برای غیر ادمین)
+        if (!$isAdmin) {
+            $query->where('unit_id', $user->unit_id);
+        }
 
         if ($request->has('search') && !empty($request->search)) {
             $search = $request->search;
@@ -86,6 +94,9 @@ class FormController extends Controller
      */
     public function show($id)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
         $form = Form::with(['unit', 'target', 'program', 'task', 'activity'])->find($id);
 
         if (!$form) {
@@ -93,6 +104,14 @@ class FormController extends Controller
                 'success' => false,
                 'message' => 'کاربرگ مورد نظر یافت نشد'
             ], 404);
+        }
+
+        // بررسی دسترسی
+        if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'شما به این کاربرگ دسترسی ندارید'
+            ], 403);
         }
 
         return response()->json([
@@ -106,6 +125,9 @@ class FormController extends Controller
      */
     public function update(Request $request, $id)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
         $form = Form::find($id);
 
         if (!$form) {
@@ -113,6 +135,14 @@ class FormController extends Controller
                 'success' => false,
                 'message' => 'کاربرگ مورد نظر یافت نشد'
             ], 404);
+        }
+
+        // بررسی دسترسی
+        if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'شما به این کاربرگ دسترسی ندارید'
+            ], 403);
         }
 
         $request->validate([
@@ -144,6 +174,9 @@ class FormController extends Controller
      */
     public function destroy($id)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
         $form = Form::find($id);
 
         if (!$form) {
@@ -151,6 +184,14 @@ class FormController extends Controller
                 'success' => false,
                 'message' => 'کاربرگ مورد نظر یافت نشد'
             ], 404);
+        }
+
+        // بررسی دسترسی
+        if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'شما به این کاربرگ دسترسی ندارید'
+            ], 403);
         }
 
         // حذف مقادیر فیلدها
@@ -174,6 +215,25 @@ class FormController extends Controller
      */
     public function getFields($id)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
+        // بررسی دسترسی به کاربرگ
+        $form = Form::find($id);
+        if (!$form) {
+            return response()->json([
+                'success' => false,
+                'message' => 'کاربرگ مورد نظر یافت نشد'
+            ], 404);
+        }
+
+        if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'شما به این کاربرگ دسترسی ندارید'
+            ], 403);
+        }
+        
         $fields = FormField::where('form_id', $id)
             ->orderBy('sort_order')
             ->get();
@@ -189,6 +249,9 @@ class FormController extends Controller
      */
     public function saveFields(Request $request, $id)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
         $form = Form::find($id);
 
         if (!$form) {
@@ -196,6 +259,14 @@ class FormController extends Controller
                 'success' => false,
                 'message' => 'کاربرگ مورد نظر یافت نشد'
             ], 404);
+        }
+
+        // بررسی دسترسی
+        if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'شما به این کاربرگ دسترسی ندارید'
+            ], 403);
         }
 
         $request->validate([
@@ -252,6 +323,9 @@ class FormController extends Controller
     public function getForm($id)
     {
         try {
+            $user = auth()->user();
+            $isAdmin = $user->role->slug === 'ADMIN';
+            
             $form = Form::with(['unit', 'target', 'program', 'task', 'activity'])->find($id);
 
             if (!$form) {
@@ -259,6 +333,14 @@ class FormController extends Controller
                     'success' => false,
                     'message' => 'کاربرگ مورد نظر یافت نشد'
                 ], 404);
+            }
+
+            // بررسی دسترسی
+            if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'شما به این کاربرگ دسترسی ندارید'
+                ], 403);
             }
 
             // دریافت فیلدهای متغیر فرم
@@ -309,6 +391,9 @@ class FormController extends Controller
      */
     public function saveForm(Request $request, $id)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
         $form = Form::find($id);
 
         if (!$form) {
@@ -316,6 +401,14 @@ class FormController extends Controller
                 'success' => false,
                 'message' => 'کاربرگ مورد نظر یافت نشد'
             ], 404);
+        }
+
+        // بررسی دسترسی
+        if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'شما به این کاربرگ دسترسی ندارید'
+            ], 403);
         }
 
         $request->validate([
@@ -356,12 +449,24 @@ class FormController extends Controller
      */
     public function export($id)
     {
+        $user = auth()->user();
+        $isAdmin = $user->role->slug === 'ADMIN';
+        
         $form = Form::find($id);
+        
         if (!$form) {
             return response()->json([
                 'success' => false,
                 'message' => 'کاربرگ مورد نظر یافت نشد'
             ], 404);
+        }
+
+        // بررسی دسترسی
+        if (!$isAdmin && $form->unit_id !== $user->unit_id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'شما به این کاربرگ دسترسی ندارید'
+            ], 403);
         }
 
         return Excel::download(new FormsExport($id), $form->code . '.xlsx');

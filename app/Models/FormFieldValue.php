@@ -32,4 +32,10 @@ class FormFieldValue extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    // Alias برای سهولت دسترسی
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
 }
