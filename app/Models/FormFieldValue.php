@@ -14,6 +14,7 @@ class FormFieldValue extends Model
     protected $fillable = [
         'form_field_id',
         'form_id',
+        'row_index',
         'field_value',
         'created_by'
     ];

@@ -6,6 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\Form;
 use App\Models\FormField;
 use App\Models\FormFieldValue;
+use App\Models\Target;
+use App\Models\Program;
+use App\Models\Task;
+use App\Models\Activity;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use App\Exports\FormsExport;
@@ -311,15 +315,6 @@ class FormController extends Controller
     /**
      * دریافت فرم پویا برای نمایش و مقداردهی (فیلدها + مقادیر ذخیره شده)
      */
-    /**
-     * دریافت فرم پویا برای نمایش و مقداردهی (فیلدها + مقادیر ذخیره شده)
-     */
-    /**
-     * دریافت فرم پویا برای نمایش و مقداردهی (فیلدها + مقادیر ذخیره شده)
-     */
-    /**
-     * دریافت فرم پویا برای نمایش و مقداردهی (فیلدها + مقادیر ذخیره شده)
-     */
     public function getForm($id)
     {
         try {
@@ -348,17 +343,17 @@ class FormController extends Controller
                 ->orderBy('sort_order')
                 ->get();
 
-            // دریافت مقادیر ذخیره شده برای این کاربرگ
+            // دریافت مقادیر ذخیره شده برای این کاربرگ (تمام ردیف‌ها)
             $fieldValues = FormFieldValue::where('form_id', $id)
-                ->where('created_by', auth()->id())
-                ->get()
-                ->keyBy('form_field_id');
+                ->orderBy('row_index')
+                ->get();
 
-            // ساخت آرایه فیلدها با مقادیر
-            $fieldsArray = [];
-            foreach ($fields as $field) {
-                $value = $fieldValues->get($field->id);
-                $fieldsArray[] = [
+            // گروه‌بندی مقادیر بر اساس row_index
+            $valuesByRow = $fieldValues->groupBy('row_index');
+
+            // ساخت آرایه فیلدها
+            $fieldsArray = $fields->map(function ($field) {
+                return [
                     'id' => $field->id,
                     'field_label' => $field->field_label,
                     'field_type' => $field->field_type,
@@ -366,7 +361,20 @@ class FormController extends Controller
                     'field_options' => $field->field_options,
                     'is_required' => $field->is_required,
                     'sort_order' => $field->sort_order,
-                    'value' => $value ? $value->field_value : '',
+                ];
+            })->toArray();
+
+            // ساخت آرایه ردیف‌های داده
+            $dataRows = [];
+            foreach ($valuesByRow as $rowIndex => $rowValues) {
+                $row = [];
+                foreach ($fields as $field) {
+                    $value = $rowValues->firstWhere('form_field_id', $field->id);
+                    $row[$field->id] = $value ? $value->field_value : '';
+                }
+                $dataRows[] = [
+                    'row_index' => $rowIndex,
+                    'values' => $row
                 ];
             }
 
@@ -374,7 +382,9 @@ class FormController extends Controller
                 'success' => true,
                 'data' => [
                     'form' => $form,
-                    'fields' => $fieldsArray
+                    'fields' => $fieldsArray,
+                    'data_rows' => $dataRows,
+                    'row_count' => count($dataRows)
                 ]
             ]);
 
@@ -412,24 +422,32 @@ class FormController extends Controller
         }
 
         $request->validate([
-            'fields' => 'required|array',
-            'fields.*.id' => 'required|exists:form_fields,id',
-            'fields.*.value' => 'nullable|string',
+            'data_rows' => 'required|array',
+            'data_rows.*.row_index' => 'required|integer|min:0',
+            'data_rows.*.values' => 'required|array',
             'is_completed' => 'boolean',
         ]);
 
-        // ذخیره مقادیر فیلدها
-        foreach ($request->fields as $fieldData) {
-            FormFieldValue::updateOrCreate(
-                [
-                    'form_field_id' => $fieldData['id'],
-                    'form_id' => $id,
-                    'created_by' => auth()->id(),
-                ],
-                [
-                    'field_value' => $fieldData['value'] ?? null,
-                ]
-            );
+        // حذف تمام مقادیر قبلی این فرم
+        FormFieldValue::where('form_id', $id)->delete();
+
+        // ذخیره مقادیر جدید برای تمام ردیف‌ها
+        foreach ($request->data_rows as $dataRow) {
+            $rowIndex = $dataRow['row_index'];
+            $values = $dataRow['values'];
+
+            foreach ($values as $fieldId => $value) {
+                // فقط مقادیر غیر خالی را ذخیره کن
+                if (!empty(trim($value))) {
+                    FormFieldValue::create([
+                        'form_field_id' => $fieldId,
+                        'form_id' => $id,
+                        'row_index' => $rowIndex,
+                        'field_value' => $value,
+                        'created_by' => $user->id,
+                    ]);
+                }
+            }
         }
 
         // به‌روزرسانی وضعیت تکمیل کاربرگ
@@ -473,39 +491,313 @@ class FormController extends Controller
     }
 
     /**
-     * ورودی Excel برای ایجاد کاربرگ جدید
+     * ورودی Excel برای ایجاد کاربرگ جدید از چند شیت
      */
     public function import(Request $request)
     {
         $request->validate([
             'file' => 'required|file|mimes:xlsx,xls',
-            'code' => 'required|string|max:50'
         ]);
 
-        // بررسی وجود کاربرگ با همین کد
-        $existingForm = Form::where('code', $request->code)->first();
-        if ($existingForm) {
+        try {
+            $file = $request->file('file');
+            $filePath = $file->getRealPath();
+            
+            // خواندن فایل Excel
+            $reader = \PhpOffice\PhpSpreadsheet\IOFactory::createReader(
+                \PhpOffice\PhpSpreadsheet\IOFactory::identify($filePath)
+            );
+            $spreadsheet = $reader->load($filePath);
+            
+            $sheetCount = $spreadsheet->getSheetCount();
+            $importedForms = [];
+            $errors = [];
+            
+            // پردازش هر شیت
+            for ($sheetIndex = 0; $sheetIndex < $sheetCount; $sheetIndex++) {
+                $sheet = $spreadsheet->getSheet($sheetIndex);
+                $sheetName = $sheet->getTitle();
+                
+                // استفاده از نام شیت به عنوان کد کاربرگ
+                $formCode = !empty(trim($sheetName)) ? trim($sheetName) : 'Sheet_' . ($sheetIndex + 1);
+                
+                // بررسی وجود کاربرگ با همین کد
+                $existingForm = Form::where('code', $formCode)->first();
+                if ($existingForm) {
+                    $errors[] = "کاربرگ با کد '{$formCode}' قبلاً وجود دارد";
+                    continue;
+                }
+                
+                // پردازش شیت
+                try {
+                    $this->processSheet($sheet, $formCode);
+                    $importedForms[] = $formCode;
+                } catch (\Exception $e) {
+                    $errors[] = "خطا در پردازش شیت '{$formCode}': " . $e->getMessage();
+                }
+            }
+            
+            // ساخت پیام پاسخ
+            $message = '';
+            if (!empty($importedForms)) {
+                $count = count($importedForms);
+                $message .= $count . ' کاربرگ با موفقیت ایجاد شد';
+                if ($count <= 5) {
+                    $message .= ': ' . implode(', ', $importedForms);
+                }
+            }
+            
+            if (!empty($errors)) {
+                return response()->json([
+                    'success' => !empty($importedForms),
+                    'message' => $message,
+                    'imported' => $importedForms,
+                    'errors' => $errors,
+                    'imported_count' => count($importedForms),
+                    'error_count' => count($errors)
+                ], !empty($importedForms) ? 200 : 422);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'imported' => $importedForms,
+                'imported_count' => count($importedForms)
+            ]);
+            
+        } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => "کاربرگ با کد {$request->code} قبلاً وجود دارد. لطفاً ابتدا آن را حذف کنید."
-            ], 422);
+                'message' => 'خطا در پردازش فایل: ' . $e->getMessage()
+            ], 500);
         }
+    }
 
-        $import = new FormsImport($request->code);
-        Excel::import($import, $request->file('file'));
-
-        $errors = $import->getErrors();
-        if (!empty($errors)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'خطا در بارگذاری فایل',
-                'errors' => $errors
-            ], 422);
+    /**
+     * پردازش یک شیت و ایجاد کاربرگ
+     */
+    private function processSheet($sheet, $formCode)
+    {
+        $user = auth()->user();
+        $unitId = $user->unit_id ?? 1;
+        
+        $formData = [];
+        $headers = [];
+        $dataRows = []; // ذخیره تمام ردیف‌های داده (از ردیف 7 به بعد)
+        
+        // خواندن کل شیت
+        $highestRow = $sheet->getHighestRow();
+        $highestColumn = $sheet->getHighestColumn();
+        $highestColumnIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($highestColumn);
+        
+        // بررسی اینکه شیت حداقل 6 ردیف داشته باشد
+        if ($highestRow < 6) {
+            throw new \Exception("فرمت فایل نادرست است: شیت باید حداقل 6 ردیف داشته باشد");
         }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'کاربرگ با موفقیت بارگذاری شد'
+        
+        for ($rowIndex = 1; $rowIndex <= $highestRow; $rowIndex++) {
+            $row = [];
+            
+            for ($colIndex = 1; $colIndex <= $highestColumnIndex; $colIndex++) {
+                $cell = $sheet->getCellByColumnAndRow($colIndex, $rowIndex);
+                $row[] = $cell->getValue();
+            }
+            
+            // ردیف 1: هدف
+            if ($rowIndex === 1) {
+                $goalText = $row[0] ?? '';
+                if (preg_match('/هدف\s+(\S+)\s*:\s*(.+)/', $goalText, $matches)) {
+                    $formData['goal'] = [
+                        'code' => trim($matches[1]),
+                        'title' => trim($matches[2]),
+                    ];
+                }
+            }
+            // ردیف 2: برنامه
+            elseif ($rowIndex === 2) {
+                $programText = $row[0] ?? '';
+                if (preg_match('/برنامه\s+(\S+)\s*:\s*(.+)/', $programText, $matches)) {
+                    $formData['program'] = [
+                        'code' => trim($matches[1]),
+                        'title' => trim($matches[2]),
+                    ];
+                }
+            }
+            // ردیف 3: اقدام
+            elseif ($rowIndex === 3) {
+                $taskText = $row[0] ?? '';
+                if (preg_match('/اقدام\s+(\S+)\s*:\s*(.+)/', $taskText, $matches)) {
+                    $formData['task'] = [
+                        'code' => trim($matches[1]),
+                        'title' => trim($matches[2]),
+                    ];
+                }
+            }
+            // ردیف 4: فعالیت
+            elseif ($rowIndex === 4) {
+                $activityText = $row[0] ?? '';
+                if (preg_match('/فعالیت\s+(\S+)\s*:\s*(.+)/', $activityText, $matches)) {
+                    $formData['activity'] = [
+                        'code' => trim($matches[1]),
+                        'title' => trim($matches[2]),
+                    ];
+                } elseif (preg_match('/فعالیت\s*:\s*(.+)/', $activityText, $matches)) {
+                    $formData['activity'] = [
+                        'title' => trim($matches[1]),
+                    ];
+                }
+            }
+            // ردیف 6: عناوین فیلدها (headers)
+            elseif ($rowIndex === 6) {
+                foreach ($row as $colIndex => $header) {
+                    $header = trim($header ?? '');
+                    if (!empty($header) && $header !== 'ردیف') {
+                        $headers[$colIndex] = $header;
+                    }
+                }
+            }
+            // ردیف 7 به بعد: مقادیر فیلدها (data rows)
+            elseif ($rowIndex >= 7) {
+                // اگر header نداریم، از این ردیف به بعد نمی‌خوانیم
+                if (empty($headers)) {
+                    break;
+                }
+                
+                // بررسی اینکه ردیف خالی نباشد
+                $hasData = false;
+                $dataRow = [];
+                
+                foreach ($row as $colIndex => $value) {
+                    if (isset($headers[$colIndex])) {
+                        $trimmedValue = trim($value ?? '');
+                        $dataRow[$colIndex] = $trimmedValue;
+                        if (!empty($trimmedValue)) {
+                            $hasData = true;
+                        }
+                    }
+                }
+                
+                // فقط ردیف‌هایی که حداقل یک مقدار دارند را ذخیره کن
+                if ($hasData) {
+                    $dataRows[] = $dataRow;
+                }
+            }
+        }
+        
+        // اگر هیچ header نداشتیم، یک کاربرگ خالی (بدون فیلد) ایجاد می‌کنیم
+        // این برای کاربرگ‌هایی است که فقط metadata دارند
+        
+        // پیدا کردن IDها
+        $targetId = null;
+        $programId = null;
+        $taskId = null;
+        $activityId = null;
+        
+        // پیدا کردن هدف
+        if (!empty($formData['goal']['code'])) {
+            $target = Target::where('code', $formData['goal']['code'])->first();
+            if ($target) {
+                $targetId = $target->id;
+            } else {
+                throw new \Exception("هدف با کد '{$formData['goal']['code']}' یافت نشد");
+            }
+        } else {
+            throw new \Exception("کد هدف یافت نشد");
+        }
+        
+        // پیدا کردن برنامه
+        if (!empty($formData['program']['code']) && $targetId) {
+            $program = Program::where('target_id', $targetId)
+                ->where('code', $formData['program']['code'])
+                ->first();
+            if ($program) {
+                $programId = $program->id;
+            } else {
+                throw new \Exception("برنامه با کد '{$formData['program']['code']}' در هدف مشخص شده یافت نشد");
+            }
+        } else {
+            throw new \Exception("کد برنامه یافت نشد");
+        }
+        
+        // پیدا کردن اقدام (اختیاری)
+        if (!empty($formData['task']['code']) && $programId) {
+            $task = Task::where('program_id', $programId)
+                ->where('code', $formData['task']['code'])
+                ->first();
+            if ($task) {
+                $taskId = $task->id;
+            }
+            // اگر یافت نشد، null می‌ماند (اختیاری است)
+        }
+        
+        // پیدا کردن فعالیت (اختیاری)
+        if (!empty($formData['activity']['title'])) {
+            // اگر کد داشت، اول با کد جستجو کن
+            if (!empty($formData['activity']['code'])) {
+                $activity = Activity::where('code', $formData['activity']['code'])->first();
+            }
+            // اگر پیدا نشد یا کد نداشت، با عنوان جستجو کن
+            if (!isset($activity)) {
+                $activity = Activity::where('title', 'like', '%' . $formData['activity']['title'] . '%')->first();
+            }
+            if ($activity) {
+                $activityId = $activity->id;
+            }
+        }
+        
+        // ایجاد کاربرگ
+        $form = Form::create([
+            'code' => $formCode,
+            'unit_id' => $unitId,
+            'target_id' => (int)$targetId,
+            'program_id' => (int)$programId,
+            'task_id' => $taskId ? (int)$taskId : null,
+            'activity_id' => $activityId ? (int)$activityId : null,
+            'description' => 'Import از Excel - ' . $formCode,
+            'is_completed' => false,
+            'created_by' => $user->username,
         ]);
+        
+        // اگر header داشتیم، فیلدها را ایجاد کن
+        if (!empty($headers)) {
+            // ایجاد فیلدهای متغیر (یک بار برای فرم)
+            $formFields = [];
+            $sortOrder = 0;
+            
+            foreach ($headers as $colIndex => $header) {
+                $formField = FormField::create([
+                    'form_id' => $form->id,
+                    'field_label' => $header,
+                    'field_type' => 'text',
+                    'field_placeholder' => '',
+                    'is_required' => false,
+                    'sort_order' => $sortOrder,
+                ]);
+                
+                $formFields[$colIndex] = $formField;
+                $sortOrder++;
+            }
+            
+            // ایجاد مقادیر فیلدها برای تمام ردیف‌های داده
+            foreach ($dataRows as $rowIdx => $dataRow) {
+                foreach ($headers as $colIndex => $header) {
+                    $value = $dataRow[$colIndex] ?? '';
+                    
+                    // فقط مقادیر غیر خالی را ذخیره کن
+                    if (!empty(trim($value)) && isset($formFields[$colIndex])) {
+                        FormFieldValue::create([
+                            'form_field_id' => $formFields[$colIndex]->id,
+                            'form_id' => $form->id,
+                            'row_index' => $rowIdx, // شماره ردیف (0, 1, 2, ...)
+                            'field_value' => $value,
+                            'created_by' => $user->id,
+                        ]);
+                    }
+                }
+            }
+        }
+        // اگر header نداشتیم، فقط کاربرگ را ایجاد می‌کنیم (بدون فیلد)
+        
+        return $form;
     }
 }
