@@ -53,13 +53,15 @@ class ReportController extends Controller
         $incompleteForms = (clone $formsQuery)->where('is_completed', false)->count();
 
         // آمار بر اساس واحد
-        $statsByUnit = Unit::select('units.id', 'units.name', DB::raw('COUNT(forms.id) as total_forms'))
-            ->leftJoin('forms', function($join) use ($request, $isAdmin, $user) {
-                $join->on('units.id', '=', 'forms.unit_id');
-                if (!$isAdmin) {
-                    $join->where('forms.unit_id', '=', $user->unit_id);
-                }
-            })
+        $statsByUnitQuery = Unit::select('units.id', 'units.name', DB::raw('COUNT(forms.id) as total_forms'))
+            ->leftJoin('forms', 'units.id', '=', 'forms.unit_id');
+        
+        // برای کاربران غیر ادمین، فقط واحد خودشان را نمایش می‌دهیم
+        if (!$isAdmin) {
+            $statsByUnitQuery->where('units.id', '=', $user->unit_id);
+        }
+        
+        $statsByUnit = $statsByUnitQuery
             ->groupBy('units.id', 'units.name')
             ->get();
 
