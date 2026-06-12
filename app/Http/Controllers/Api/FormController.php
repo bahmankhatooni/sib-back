@@ -647,39 +647,48 @@ class FormController extends Controller
                     ];
                 }
             }
-            // ردیف 6: عناوین فیلدها (headers)
-            elseif ($rowIndex === 6) {
-                foreach ($row as $colIndex => $header) {
-                    $header = trim($header ?? '');
-                    if (!empty($header) && $header !== 'ردیف') {
-                        $headers[$colIndex] = $header;
-                    }
-                }
-            }
-            // ردیف 7 به بعد: مقادیر فیلدها (data rows)
-            elseif ($rowIndex >= 7) {
-                // اگر header نداریم، از این ردیف به بعد نمی‌خوانیم
-                if (empty($headers)) {
-                    break;
-                }
+            // از ردیف 5 به بعد: جستجو برای عناوین و مقادیر
+            elseif ($rowIndex >= 5) {
+                // بررسی این ردیف برای عناوین (headers)
+                // اگر ستون اول "ردیف" باشد و ستون‌های بعدی مقدار داشته باشند
+                $firstCell = trim($row[0] ?? '');
                 
-                // بررسی اینکه ردیف خالی نباشد
-                $hasData = false;
-                $dataRow = [];
-                
-                foreach ($row as $colIndex => $value) {
-                    if (isset($headers[$colIndex])) {
-                        $trimmedValue = trim($value ?? '');
-                        $dataRow[$colIndex] = $trimmedValue;
-                        if (!empty($trimmedValue)) {
-                            $hasData = true;
+                if ($firstCell === 'ردیف' && empty($headers)) {
+                    // این ردیف احتمالاً عناوین است
+                    $hasHeaders = false;
+                    foreach ($row as $colIndex => $header) {
+                        if ($colIndex === 0) continue; // skip "ردیف"
+                        $header = trim($header ?? '');
+                        if (!empty($header)) {
+                            $headers[$colIndex] = $header;
+                            $hasHeaders = true;
                         }
                     }
+                    // اگر هدر پیدا نشد، ادامه بده تا ردیف بعدی را چک کنیم
+                    if (!$hasHeaders) {
+                        $headers = [];
+                    }
                 }
-                
-                // فقط ردیف‌هایی که حداقل یک مقدار دارند را ذخیره کن
-                if ($hasData) {
-                    $dataRows[] = $dataRow;
+                // اگر header داریم و این ردیف شماره دارد (مثلاً 1, 2, 3, ...)
+                elseif (!empty($headers) && is_numeric($firstCell)) {
+                    // این یک ردیف داده است
+                    $hasData = false;
+                    $dataRow = [];
+                    
+                    foreach ($row as $colIndex => $value) {
+                        if ($colIndex === 0) continue; // skip شماره ردیف
+                        if (isset($headers[$colIndex])) {
+                            $trimmedValue = trim($value ?? '');
+                            $dataRow[$colIndex] = $trimmedValue;
+                            if (!empty($trimmedValue)) {
+                                $hasData = true;
+                            }
+                        }
+                    }
+                    
+                    if ($hasData) {
+                        $dataRows[] = $dataRow;
+                    }
                 }
             }
         }
