@@ -85,5 +85,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('details/{id}', [ReportController::class, 'details']);
         Route::get('export', [ReportController::class, 'export']);
     });
-
+    //پروفایل (Profile)
+    Route::post('/change-password', [UserController::class, 'changePassword']);
 });

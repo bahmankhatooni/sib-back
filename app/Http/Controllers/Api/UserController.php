@@ -227,4 +227,30 @@ class UserController extends Controller
             'data' => ['is_active' => $user->is_active]
         ]);
     }
+
+    public function changePassword(Request $request)
+    {
+        $request->validate([
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|min:6|confirmed',
+        ]);
+
+        $user = auth()->user();
+
+        if (!Hash::check($request->current_password, $user->password)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'رمز عبور فعلی اشتباه است'
+            ], 422);
+        }
+
+        $user->password = Hash::make($request->new_password);
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'رمز عبور با موفقیت تغییر کرد'
+        ]);
+    }
+
 }
